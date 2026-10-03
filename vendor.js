@@ -1,294 +1,84 @@
-class Crc32 {
-    constructor() {
-        this.crc = -1
+/* Streaming ZIP32 writer. Consume one entry at a time and propagate read failures. */
+(function (root) {
+    'use strict';
+    const encoder = new TextEncoder();
+    const table = Uint32Array.from({ length: 256 }, (_, n) => {
+        for (let k = 0; k < 8; k++) n = (n >>> 1) ^ ((n & 1) ? 0xedb88320 : 0);
+        return n >>> 0;
+    });
+    function crc32(bytes) {
+        let crc = 0xffffffff;
+        for (const byte of bytes) crc = (crc >>> 8) ^ table[(crc ^ byte) & 255];
+        return (crc ^ 0xffffffff) >>> 0;
     }
-
-    append(data) {
-        var crc = this.crc | 0;
-        var table = this.table
-        for (var offset = 0, len = data.length | 0; offset < len; offset++) {
-            crc = (crc >>> 8) ^ table[(crc ^ data[offset]) & 0xFF]
-        }
-        this.crc = crc
+    function header(length, signature) {
+        const bytes = new Uint8Array(length), view = new DataView(bytes.buffer);
+        view.setUint32(0, signature, true); return { bytes, view };
     }
-
-    get() {
-        return ~this.crc
-    }
-}
-
-Crc32.prototype.table = (() => {
-    var i;
-    var j;
-    var t;
-    var table = []
-    for (i = 0; i < 256; i++) {
-        t = i
-        for (j = 0; j < 8; j++) {
-            t = (t & 1) ?
-                (t >>> 1) ^ 0xEDB88320 :
-                t >>> 1
-        }
-        table[i] = t
-    }
-    return table
-})()
-
-const getDataHelper = byteLength => {
-    var uint8 = new Uint8Array(byteLength)
-    return {
-        array: uint8,
-        view: new DataView(uint8.buffer)
-    }
-}
-
-const pump = zipObj => zipObj.reader.read().then(chunk => {
-    if (chunk.done) return zipObj.writeFooter()
-    const outputData = chunk.value
-    zipObj.crc.append(outputData)
-    zipObj.uncompressedLength += outputData.length
-    zipObj.compressedLength += outputData.length
-    zipObj.ctrl.enqueue(outputData)
-})
-
-/**
- * [createWriter description]
- * @param  {Object} underlyingSource [description]
- * @return {Boolean}                  [description]
- */
-function createWriter(underlyingSource) {
-    const files = Object.create(null)
-    const filenames = []
-    const encoder = new TextEncoder()
-    let offset = 0
-    let activeZipIndex = 0
-    let ctrl
-    let activeZipObject, closed
-    let zip64 = false
-    let filesSize = 0
-
-    function next() {
-        activeZipIndex++
-        activeZipObject = files[filenames[activeZipIndex]]
-        if (activeZipObject) processNextChunk()
-        else if (closed) closeZip()
-    }
-
-    var zipWriter = {
-        enqueue(fileLike) {
-            if (closed) throw new TypeError('Cannot enqueue a chunk into a readable stream that is closed or has been requested to be closed')
-
-            let name = fileLike.name.trim()
-            const date = new Date(typeof fileLike.lastModified === 'undefined' ? Date.now() : fileLike.lastModified)
-
-            if (fileLike.directory && !name.endsWith('/')) name += '/'
-            if (files[name]) console.warn('File already exists.', fileLike)
-            filesSize += fileLike.size
-            zip64 = (filesSize >= 0xffffffff)
-
-            const nameBuf = encoder.encode(name)
-            filenames.push(name)
-
-
-            const zipObject = files[name] = {
-                level: 0,
-                ctrl,
-                directory: !!fileLike.directory,
-                nameBuf,
-                comment: encoder.encode(fileLike.comment || ''),
-                compressedLength: 0,
-                uncompressedLength: 0,
-                extraArray: null,
-
-                writeHeader() {
-                    var header = getDataHelper(26)
-                    var data = getDataHelper(30 + nameBuf.length)
-
-                    zipObject.header = header
-                    zipObject.offset = offset
-                    if (zipObject.level !== 0 && !zipObject.directory) {
-                        header.view.setUint16(4, 0x0800)
-                    }
-                    header.view.setUint32(0, 0x14000808)
-
-                    if (zip64) //Zip64 Min ver.
-                        header.view.setUint16(0, 45, true)
-
-                    header.view.setUint16(6, (((date.getHours() << 6) | date.getMinutes()) << 5) | date.getSeconds() / 2, true)
-                    header.view.setUint16(8, ((((date.getFullYear() - 1980) << 4) | (date.getMonth() + 1)) << 5) | date.getDate(), true)
-                    header.view.setUint16(22, nameBuf.length, true)
-                    data.view.setUint32(0, 0x504b0304)
-                    data.array.set(header.array, 4)
-                    data.array.set(nameBuf, 30)
-                    offset += data.array.length
-                    ctrl.enqueue(data.array)
-                },
-
-                writeFooter() {
-                    if (zipObject.compressedLength && zipObject.compressedLength >= 0xffffffff) {
-                        zipObject.header.view.setUint16(0, 45)
-                        zip64 = true
-                    }
-
-                    var footer = getDataHelper(zip64 ? 24 : 16)
-                    footer.view.setUint32(0, 0x504b0708)
-
-                    if (zipObject.crc) {
-                        zipObject.header.view.setUint32(10, zipObject.crc.get(), true)
-                        footer.view.setUint32(4, zipObject.crc.get(), true)
-                    }
-
-                    if (zip64) {
-                        let zip64Extra = getDataHelper(28)
-                        zipObject.header.view.setUint32(14, 0xffffffff, true)
-                        zipObject.header.view.setUint32(18, 0xffffffff, true)
-                        footer.view.setBigUint64(8, BigInt(zipObject.compressedLength), true)
-                        footer.view.setBigInt64(16, BigInt(zipObject.uncompressedLength), true)
-                        zip64Extra.view.setUint16(0, 0x0001, true)
-                        zip64Extra.view.setUint16(2, 24, true)
-                        zip64Extra.view.setBigUint64(4, BigInt(zipObject.uncompressedLength), true)
-                        zip64Extra.view.setBigUint64(12, BigInt(zipObject.compressedLength), true)
-                        zip64Extra.view.setBigUint64(20, BigInt(files[name].offset), true)
-                        zipObject.extraArray = zip64Extra.array
-                    } else {
-                        zipObject.header.view.setUint32(14, zipObject.compressedLength, true)
-                        zipObject.header.view.setUint32(18, zipObject.uncompressedLength, true)
-
-                        footer.view.setUint32(8, zipObject.compressedLength, true)
-                        footer.view.setUint32(12, zipObject.uncompressedLength, true)
-
-                    }
-
-                    ctrl.enqueue(footer.array)
-                    offset += zipObject.compressedLength + footer.array.length
-                    next()
-                },
-                fileLike
+    function ZIP(source) {
+        const queue = [], names = new Set();
+        let closed = false, cancelled = false, pending, failure;
+        function wake() { if (pending) { pending(); pending = null; } }
+        const writer = {
+            enqueue(file) {
+                if (closed || cancelled) throw new Error('ZIP is closed');
+                if (!file.name || /(^|\/)\.\.(\/|$)|^[/\\]|^[A-Za-z]:/.test(file.name)) throw new Error('Unsafe ZIP filename');
+                if (names.has(file.name)) throw new Error(`Duplicate ZIP filename: ${file.name}`);
+                names.add(file.name); queue.push(file); wake();
+            },
+            close() { closed = true; wake(); }
+        };
+        Promise.resolve().then(() => source.start(writer)).catch(error => { failure = error; closed = true; wake(); });
+        async function* chunks() {
+            const central = [];
+            let offset = 0;
+            while (!cancelled) {
+                if (failure) throw failure;
+                if (!queue.length) {
+                    if (closed) break;
+                    await new Promise(resolve => { pending = resolve; }); continue;
+                }
+                const file = queue.shift();
+                const data = file.bytes ? await file.bytes() : new Uint8Array(await new Response(file.stream()).arrayBuffer());
+                const name = encoder.encode(file.name);
+                if (name.length > 65535 || data.length >= 0xffffffff || offset + data.length + name.length + 30 >= 0xffffffff || central.length >= 65535) throw new Error('ZIP32 limit exceeded; use the CLI to save files directly');
+                const crc = crc32(data), local = header(30 + name.length, 0x04034b50);
+                local.view.setUint16(4, 20, true); local.view.setUint16(6, 0x800, true);
+                // Fixed valid DOS timestamp avoids locale-dependent metadata.
+                local.view.setUint16(12, 0x21, true);
+                local.view.setUint32(14, crc, true);
+                local.view.setUint32(18, data.length, true); local.view.setUint32(22, data.length, true);
+                local.view.setUint16(26, name.length, true); local.bytes.set(name, 30);
+                central.push({ name, crc, size: data.length, offset });
+                yield local.bytes; yield data;
+                offset += local.bytes.length + data.length;
+                source.onEntry?.(file.name);
             }
-
-            if (!activeZipObject) {
-                activeZipObject = zipObject
-                processNextChunk()
+            if (cancelled) return;
+            const centralOffset = offset;
+            for (const entry of central) {
+                const item = header(46 + entry.name.length, 0x02014b50);
+                item.view.setUint16(4, 20, true); item.view.setUint16(6, 20, true);
+                item.view.setUint16(8, 0x800, true); item.view.setUint16(14, 0x21, true);
+                item.view.setUint32(16, entry.crc, true); item.view.setUint32(20, entry.size, true); item.view.setUint32(24, entry.size, true);
+                item.view.setUint16(28, entry.name.length, true); item.view.setUint32(42, entry.offset, true);
+                item.bytes.set(entry.name, 46); yield item.bytes; offset += item.bytes.length;
             }
-        },
-        close() {
-            if (closed) throw new TypeError('Cannot close a readable stream that has already been requested to be closed')
-            if (!activeZipObject) closeZip()
-            closed = true
+            if (offset >= 0xffffffff) throw new Error('ZIP32 central directory limit exceeded');
+            const end = header(22, 0x06054b50);
+            end.view.setUint16(8, central.length, true); end.view.setUint16(10, central.length, true);
+            end.view.setUint32(12, offset - centralOffset, true); end.view.setUint32(16, centralOffset, true);
+            yield end.bytes;
         }
+        const iterator = chunks();
+        return new ReadableStream({
+            async pull(controller) {
+                try { const next = await iterator.next(); if (next.done) controller.close(); else controller.enqueue(next.value); }
+                catch (error) { cancelled = true; controller.error(error); }
+            },
+            async cancel() { cancelled = true; wake(); await iterator.return(); }
+        });
     }
-
-    function closeZip() {
-        var length = 0
-        var index = 0
-        var indexFilename, file, cdOffset, totalEntries = filenames.length
-        var zip64 = false
-        for (indexFilename = 0; indexFilename < totalEntries; indexFilename++) {
-            file = files[filenames[indexFilename]]
-            length += 46 + file.nameBuf.length + file.comment.length
-            if (file.extraArray) {
-                length += file.extraArray.length
-                zip64 = true
-            }
-        }
-        cdOffset = offset
-        if (cdOffset + length >= 0xffffffff || totalEntries >= 0xffff)
-            zip64 = true
-
-        const data = getDataHelper(length + (zip64 ? 56 + 20 : 0) + 22)
-        for (indexFilename = 0; indexFilename < totalEntries; indexFilename++) {
-            file = files[filenames[indexFilename]]
-            data.view.setUint32(index, 0x504b0102)
-            data.view.setUint16(index + 4, 0x1400)
-            data.array.set(file.header.array, index + 6)
-            if (file.extraArray) {
-                data.view.setUint16(index + 30, file.extraArray.length, true)
-            }
-            data.view.setUint16(index + 32, file.comment.length, true)
-            if (file.directory) {
-                data.view.setUint8(index + 38, 0x10)
-            }
-            if (file.offset >= 0xffffffff)
-                data.view.setUint32(index + 42, 0xffffffff, true)
-            else
-                data.view.setUint32(index + 42, file.offset, true)
-
-            data.array.set(file.nameBuf, index + 46)
-            var extraLength = 0
-            if (file.extraArray) {
-                extraLength = file.extraArray.length
-                data.array.set(file.extraArray, index + 46 + file.nameBuf.length)
-            }
-            data.array.set(file.comment, index + 46 + file.nameBuf.length + extraLength)
-            index += 46 + file.nameBuf.length + file.comment.length + extraLength
-        }
-        if (zip64) {
-            // Zip64 End of Central Directory record
-            // 0: Signature
-            data.view.setUint32(index, 0x504b0606);
-            // 4: Size of zip64 EOCD
-            data.view.setBigUint64(index + 4, BigInt(44), true);
-            // 12: Version made By
-            data.view.setUint16(index + 12, 45, true);
-            // 14: version needed to extract
-            data.view.setUint16(index + 14, 45, true);
-            // 16: number of this disk
-            // 20: number of the disk with the start of CD
-            // 24: total number of entries in the central directory on this disk
-            data.view.setBigUint64(index + 24, BigInt(totalEntries), true);
-            // 32: total number of entries in the central directory
-            data.view.setBigUint64(index + 32, BigInt(totalEntries), true);
-            // 40: size of the central directory
-            data.view.setBigUint64(index + 40, BigInt(length), true);
-            // 48: Offset of start of central directory
-            data.view.setBigUint64(index + 48, BigInt(cdOffset), true);
-            index += 56
-
-            // Zip64 End of Central Directory locator
-            // 0: Signature
-            data.view.setUint32(index, 0x504b0607);
-            // 4: number of the disk with the zip64 EOCD
-            // 8: Offset of the zip64 EOCD
-            data.view.setBigUint64(index + 8, BigInt(cdOffset + length), true);
-            // 16: total number of disks
-            data.view.setUint32(index + 16, 1, true);
-            index += 20
-
-            // EOCD must set these values to 0xffff and 0xffffffff when using ZIP64 format
-            totalEntries = 0xffff;
-            cdOffset = 0xffffffff;
-        }
-        data.view.setUint32(index, 0x504b0506)
-        data.view.setUint16(index + 8, totalEntries, true)
-        data.view.setUint16(index + 10, totalEntries, true)
-        data.view.setUint32(index + 12, length, true)
-        data.view.setUint32(index + 16, cdOffset, true)
-        ctrl.enqueue(data.array)
-        ctrl.close()
-    }
-
-    function processNextChunk() {
-        if (!activeZipObject) return
-        if (activeZipObject.directory) return activeZipObject.writeFooter(activeZipObject.writeHeader())
-        if (activeZipObject.reader) return pump(activeZipObject)
-        if (activeZipObject.fileLike.stream) {
-            activeZipObject.crc = new Crc32()
-            activeZipObject.reader = activeZipObject.fileLike.stream().getReader()
-            activeZipObject.writeHeader()
-        } else next()
-    }
-    return new ReadableStream({
-        start: c => {
-            ctrl = c
-            underlyingSource.start && Promise.resolve(underlyingSource.start(zipWriter))
-        },
-        pull() {
-            return processNextChunk() || (
-                underlyingSource.pull &&
-                Promise.resolve(underlyingSource.pull(zipWriter))
-            )
-        }
-    })
-}
-
-window.ZIP = createWriter
+    if (typeof module === 'object' && module.exports) module.exports = ZIP;
+    else root.ZIP = ZIP;
+})(typeof globalThis === 'object' ? globalThis : this);

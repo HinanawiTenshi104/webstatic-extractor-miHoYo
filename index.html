@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 
 <head>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="webstatic-proxy" content="/fetch" />
     <title>webstatic-extractor</title>
     <style>
         body {
@@ -40,7 +41,9 @@
         }
 
         #desc {
-            height: 80px;
+            min-height: 80px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             font-family: Consolas, monospace;
             margin-top: 10px;
             color: #666;
@@ -82,26 +85,39 @@
             font-weight: bold;
             color: #d86c32;
         }
+        #download-options {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            font: 14px sans-serif;
+        }
+        #download, #cancel, #concurrency {
+            padding: 8px 12px;
+        }
     </style>
-    <script>
-        var _hmt = _hmt || [];
-        (function () {
-            var hm = document.createElement('script');
-            hm.src = 'https://hm.baidu.com/hm.js?51a2b668c772c432525c1163279ed0c7';
-            var s = document.getElementsByTagName('script')[0];
-            s.parentNode.insertBefore(hm, s);
-        })();
-    </script>
 </head>
 
 <body>
     <div id="tt"><span>W</span>ebstatic <span>E</span>xtractor</div>
     <div id="cc">
-        <input type="text" id="url" placeholder="https://webstatic.mihoyo.com/....." />
-        <button onclick="clk()" id="btn">Extract</button>
-        <div id="desc"></div>
+        <input type="url" id="url" aria-label="活动页面链接" placeholder="粘贴原神活动页面链接" />
+        <button onclick="clk()" id="btn">解析素材</button>
+        <div id="desc" role="status" aria-live="polite">输入活动链接，解析后下载图集、骨骼、贴图及其他素材。</div>
+        <div id="download-options">
+            <label>同时下载
+                <select id="concurrency" aria-label="同时下载的文件数">
+                    <option value="4">4 个文件</option>
+                    <option value="8" selected>8 个文件（推荐）</option>
+                    <option value="16">16 个文件</option>
+                </select>
+            </label>
+            <button onclick="downloadZip()" id="download" disabled>下载 ZIP</button>
+            <button onclick="cancelDownload()" id="cancel" hidden>取消下载</button>
+        </div>
     </div>
-    <a href="https://github.com/YuehaiTeam/webstatic-extractor" class="github-corner"
+    <a href="https://github.com/HinanawiTenshi104/webstatic-extractor" class="github-corner"
         aria-label="View source on GitHub"><svg width="80" height="80" viewBox="0 0 250 250"
             style="fill: #fa932f; color: #fff; position: absolute; top: 0; border: 0; right: 0" aria-hidden="true">
             <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
@@ -114,31 +130,11 @@
         </svg>
     </a>
 </body>
-<script>
-    if(location.protocol==='http:'){
-        location.replace(location.href.replace('http:','https:'))
-    }
-</script>
-<script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/regenerator-runtime@0.13.9/runtime.min.js"></script>
-<script>
-    streamSaver.mitm = location.href.includes('/webstatic-extractor/') ? '/webstatic-extractor/mitm.html' : '/mitm.html'
-</script>
-<script src="/vendor.js"></script>
-<script src="/app.js"></script>
-<script>
-    const href = location.href.replace(location.search, '').replace(location.hash, '');
-    const domain = location.pathname.split('/')[1]
-    if (href.endsWith('.html') && href.includes('event/') || domain.includes('.com')) {
-        if (!domain.includes('.com')) {
-            domain = 'webstatic.mihoyo.com'
-        }
-        url.value = href
-            .replace('/' + domain + '/', '/')
-            .replace(location.origin, 'https://' + domain)
-            .replace('/webstatic-extractor/', '/');
-        clk();
-    }
-</script>
+<script src="node_modules/acorn/dist/acorn.js"></script>
+<script src="extractor.js"></script>
+<script src="plan.js"></script>
+<script src="vendor.js"></script>
+<script src="download.js"></script>
+<script src="app.js"></script>
 
 </html>

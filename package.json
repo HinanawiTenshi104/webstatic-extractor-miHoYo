@@ -1,0 +1,14 @@
+{
+  "name": "webstatic-extractor",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Static Spine and asset extraction for miHoYo event pages",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build-site.js",
+    "extract": "node cli.js",
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "acorn": "8.15.0" }
+}
