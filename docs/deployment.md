@@ -5,13 +5,19 @@
 ## 开启自动部署
 
 1. 把本项目修改推送到 fork 的 `main` 分支。
-2. 打开仓库 **Settings → Pages → Build and deployment → Source**，选择 **GitHub Actions**。
+2. 打开仓库 [Settings → Pages](https://github.com/HinanawiTenshi104/webstatic-extractor/settings/pages)，在 **Build and deployment → Source** 选择 **GitHub Actions**。这是首次部署的必要设置，提交工作流本身不会启用 Pages。
 3. 如果 fork 的 Actions 尚未启用，在 **Actions** 页面启用工作流。
 4. 在 **Actions → Deploy GitHub Pages → Run workflow** 手动运行一次。以后每次推送 `main` 自动部署。
 5. 等 `build` 和 `deploy` 成功，Pages 设置或工作流会显示网址。此 fork 的默认地址为：
    <https://hinanawitenshi104.github.io/webstatic-extractor/>
 
 工作流位于 [pages.yml](../.github/workflows/pages.yml)。它只上传 `dist/` 中的页面、脚本和许可证，不上传 Node 服务、素材、源站资源包或 `node_modules`。原仓库 `CNAME` 保留在源码中，但不会带入部署；不需要原作者的域名，也不需要额外部署密钥。
+
+## 常见部署提示
+
+- **`Get Pages site failed / Not Found`**：先完成上面的 Pages 设置，再运行工作流。读取站点配置的 build job 需要 `pages: read`，部署 job 使用 `pages: write` 和 `id-token: write`，工作流中已分别配置。可在 Actions 中重新运行失败的任务；如果同时修改了工作流，请推送新提交以使用新版本。`configure-pages` 的 `enablement: true` 需要额外的 PAT 或 GitHub App token，默认 `GITHUB_TOKEN` 无法完成首次启用；本项目选择手动设置一次，不需要创建额外 token。
+- **`Node.js 20 is deprecated`**：这是 Action 自身的运行时提示，与 `node-version: '22'` 指定的项目构建版本不同。工作流已升级到使用 Node 24 的官方 Actions；上传 Pages artifact 的新版内部依赖也已同步升级。
+- **Ubuntu 26 迁移提示**：这是 `ubuntu-latest` 的镜像迁移通知，不是本次失败原因。工作流固定使用 `ubuntu-24.04`，以后按需主动升级。
 
 本地构建：
 
