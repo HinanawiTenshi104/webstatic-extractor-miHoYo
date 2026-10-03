@@ -1,5 +1,7 @@
 # Webstatic Extractor
 
+# 注：使用了GPT6 Astra进行修复
+
 ## 更新与使用
 
 - 改用静态语法解析，支持压缩后的 Spine 清单、内嵌 atlas 和外置 JSON；每套骨骼与原名贴图配套保存。
